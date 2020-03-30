@@ -487,7 +487,7 @@ function single_script_check() {
   logverbose "checking that script isn't already running"
   logverbose "grep_script: ${grep_script}"
   status="$(ps -feww | grep -w \"${grep_script}\" \
-    | awk -v pid=$$ '$2 != pid { print $2 }')"
+    | awk -v pid="$(echo $$)" '$2 != pid { print $2 }')"
   if [ ! -z "${status}" ]; then
     logerror " ${SCRIPT_NAME} : Process is already running. Aborting"
     exit 1;
