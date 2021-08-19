@@ -279,7 +279,7 @@ function validate() {
         logerror "Cannot parse data_directories from ${YAML_FILE} and --home-dir argument" \
         " is missing, which should be the \$CASSANDRA_HOME path"
       else
-        data_file_directories="${CASS_HOME}/data/data"
+        data_file_directories="${CASS_HOME}/data"
       fi
     fi
     if ${INCLUDE_COMMIT_LOGS}; then
