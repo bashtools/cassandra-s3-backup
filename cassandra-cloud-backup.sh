@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 #
-# Description :  Take snapshot and incremental backups of Cassandra and copy them to Google Cloud Storage
+# Description :  Take snapshot and incremental backups of Cassandra and copy them to S3 Cloud Storage
 #                Optionally restore full system from snapshot
 # This is not an official Google product.
 #
@@ -54,8 +54,8 @@ Flags:
   -B, backup
     Default action is to take a backup
 
-  -b, --gcsbucket
-   Google Cloud Storage bucket used in deployment and by the cluster.
+  -b, --s3bucket
+   S3 Cloud Storage bucket used in deployment and by the cluster.
 
   -c, --clear-old-ss
     Clear any old SnapShots taken prior to this backup run to save space
@@ -70,7 +70,7 @@ Flags:
     has enough space and the appropriate permissions
 
   -D, --download-only
-    During a restore this will only download the target files from GCS
+    During a restore this will only download the target files from S3
 
   -f, --force
     Used to force the restore without confirmation prompt
@@ -116,7 +116,7 @@ Flags:
     The Cassandra User Password if required for security
 
   -r,  restore
-    Restore a backup, requires a --gcsbucket path and optional --backupdir
+    Restore a backup, requires a --s3bucket path and optional --backupdir
 
   -s, --split-size
     Split the resulting tar archive into the configured size in Megabytes, default 100M
@@ -169,7 +169,7 @@ options               list available options
 
 Examples:
   Take a full snapshot, gzip compress it with nice=15,
-  upload into the GCS Bucket, and clear old incremental and snapshot files
+  upload into the S3 Bucket, and clear old incremental and snapshot files
   ./cassandra-cloud-backup.sh -b gs://cassandra-backups123/ -zCc -N 15 backup
 
   Do a dry run of a full snapshot with verbose output and
@@ -245,38 +245,44 @@ function validate() {
   single_script_check
   set_auth_string
   verbose_vars
+
+  # Declare global vars set by parse_yaml
+  seed_provider_class_name_parameters_seeds=
+  incremental_backups=
+  native_transport_port=
+
   loginfo "***************VALIDATING INPUT******************"
-  if [ -z ${GSUTIL} ]; then
-    logerror "Cannot find gsutil utility please make sure it is in the PATH"
+  if [ -z "${S3CMD}" ]; then
+    logerror "Cannot find s3cmd utility please make sure it is in the PATH"
     exit 1
   fi
-  if [ -z ${GCS_BUCKET} ]; then
+  if [ -z "${S3_BUCKET}" ]; then
       logerror "Please pass in the GCS Bucket to use with this script"
       exit 1
   else
-      if ! ${GSUTIL} ls ${GCS_BUCKET} &> /dev/null; then
-        logerror "Cannot access Google Cloud Storage bucket ${GCS_BUCKET} make sure" \
+      if ! ${S3CMD} ls "${S3_BUCKET}" &> /dev/null; then
+        logerror "Cannot access S3 Storage bucket ${S3_BUCKET} make sure" \
         " it exists"
         exit 1
       fi
   fi
-  if [ ${ACTION} != "inventory" ]; then
-    if [ -z ${NODETOOL} ]; then
+  if [ "${ACTION}" != "inventory" ]; then
+    if [ -z "${NODETOOL}" ]; then
       logerror "Cannot find nodetool utility please make sure it is in the PATH"
     fi
-    if [ -z ${CQLSH} ]; then
+    if [ -z "${CQLSH}" ]; then
       logerror "Cannot find cqlsh utility please make sure it is in the PATH"
     fi
-    if [ ! -f ${YAML_FILE} ]; then
+    if [ ! -f "${YAML_FILE}" ]; then
       logerror "Yaml File ${YAML_FILE} does not exist and --yaml argument is missing"
     else
       #different values are needed for backup and for restore
       eval "parse_yaml_${ACTION}"
     fi
 
-    if [ -z ${data_file_directories} ]; then
-      if [ -z ${CASS_HOME} ]; then
-        logerror "Cannot parse data_directories from ${YAML_FILE} and --home-dir argument" \
+    if [ -z "${data_file_directories}" ]; then
+      if [ -z "${CASS_HOME}" ]; then
+        logerror "Cannot parse data_file_directories from ${YAML_FILE} and --home-dir argument" \
         " is missing, which should be the \$CASSANDRA_HOME path"
       else
         data_file_directories="${CASS_HOME}/data"
@@ -285,51 +291,51 @@ function validate() {
     if ${INCLUDE_COMMIT_LOGS}; then
       loginfo "WARNING: Backing up Commit Logs can cause script to fail if server is under load"
     fi
-    if [ -z ${commitlog_directory} ]; then
-      if [ -z ${CASS_HOME} ]; then
+    if [ -z "${commitlog_directory}" ]; then
+      if [ -z "${CASS_HOME}" ]; then
         logerror "Cannot parse commitlog_directory from ${YAML_FILE} and --home-dir argument" \
         " is missing, which should be the \$CASSANDRA_HOME path"
       else
         commitlog_directory="${CASS_HOME}/data/commitlog"
       fi
     fi
-    if [ ! -d ${commitlog_directory} ]; then
+    if [ ! -d "${commitlog_directory}" ]; then
       logerror "no diretory commitlog_directory: ${commitlog_directory} "
     fi
     if ${INCLUDE_CACHES}; then
       loginfo "Backing up saved caches can waste space and time, but it is happening anyway"
     fi
-    if [ -z ${saved_caches_directory} ]; then
-      if [ -z ${CASS_HOME} ]; then
+    if [ -z "${saved_caches_directory}" ]; then
+      if [ -z "${CASS_HOME}" ]; then
         logerror "Cannot parse saved_caches_directory from ${YAML_FILE} and --home-dir argument" \
         " is missing, which should be the \$CASSANDRA_HOME path"
       else
         saved_caches_directory="${CASS_HOME}/data/saved_caches"
       fi
     fi
-    if [ ! -d ${saved_caches_directory} ]; then
+    if [ ! -d "${saved_caches_directory}" ]; then
       logerror "saved_caches_directory does not exist: ${saved_caches_directory} "
     fi
-    if [ ! -d ${data_file_directories} ]; then
+    if [ ! -d "${data_file_directories}" ]; then
       logerror "data_file_directories does not exist : ${data_file_directories} "
     fi
     #BACKUP_DIR is used to stage backups and stage restores, so create it either way
-    if [ ! -d ${BACKUP_DIR} ]; then
+    if [ ! -d "${BACKUP_DIR}" ]; then
         loginfo "Creating backup directory ${BACKUP_DIR}"
-        mkdir -p ${BACKUP_DIR}
+        mkdir -p "${BACKUP_DIR}"
     fi
     if ${SPLIT_FILE}; then
       SPLIT_FILE_SUFFIX="${TAR_EXT}-${SPLIT_FILE_SUFFIX}"
     fi
-    if [ ! -d ${COMPRESS_DIR} ]; then
+    if [ ! -d "${COMPRESS_DIR}" ]; then
       loginfo "Creating compression target directory"
-      mkdir -p ${COMPRESS_DIR}
+      mkdir -p "${COMPRESS_DIR}"
     fi
-    if [ -z ${TAR} ] || [ -z ${NICE} ]; then
+    if [ -z "${TAR}" ] || [ -z "${NICE}" ]; then
       logerror "The tar and nice utilities must be present to win."
     fi
-    if [ ${ACTION} = "restore" ]; then
-      GCS_LS=$(${GSUTIL} ls ${GCS_BUCKET} | head -n1)
+    if [ "${ACTION}" = "restore" ]; then
+      GCS_LS=$("${S3CMD}" ls "${S3_BUCKET}/" | head -n1)
       loginfo "GCS first file listed: ${GCS_LS}"
       if  grep -q 'incr' <<< "${GCS_LS}"; then
         loginfo "Detected incremental backup requested for restore. This script " \
@@ -342,7 +348,7 @@ function validate() {
           loginfo "Detected full snapshot backup requested for restore."
         else
           logerror "Detected a Google Cloud Storage bucket path that is not a backup" \
-          " location. Make sure the --gcsbucket e is the full path to a specific backup"
+          " location. Make sure the --s3bucket e is the full path to a specific backup"
         fi
       fi
       if grep -q "tgz" <<< "${GCS_LS}"; then
@@ -370,17 +376,17 @@ function validate() {
             SPLIT_FILE=true
             loginfo "Split file restore detected"
           else
-            logerror "Restore is not a tar file  ${GCS_BUCKET}"
+            logerror "Restore is not a tar file  ${S3_BUCKET}"
           fi
       fi
-      if [[ ! ${GCS_BUCKET} =~ ^.*\.${TAR_EXT}$ ]]; then
+      if [[ ! ${S3_BUCKET} =~ ^.*\.${TAR_EXT}$ ]]; then
         if ${SPLIT_FILE}; then
           #remove the trailing digits and replace the suffix
           RESTORE_FILE="${RESTORE_FILE%${SUFFIX}*}${SUFFIX}*"
-          GCS_BUCKET="${GCS_BUCKET%/}/${RESTORE_FILE}"
+          S3_BUCKET="${S3_BUCKET%/}/${RESTORE_FILE}"
         else
-          GCS_BUCKET="${GCS_BUCKET%/}/${RESTORE_FILE}"
-          loginfo "Fixed up restore bucket path: ${GCS_BUCKET}"
+          S3_BUCKET="${S3_BUCKET%/}/${RESTORE_FILE}"
+          loginfo "Fixed up restore bucket path: ${S3_BUCKET}"
         fi
       fi
 
@@ -399,7 +405,7 @@ function validate() {
         if ${CLEAR_SNAPSHOTS}; then
           logerror "--incremental option is not compatible with --clear-old-ss option"
         fi
-        if [ -z ${incremental_backups} ] || [  ${incremental_backups} = false  ]; then
+        if [ -z "${incremental_backups}" ] || [  "${incremental_backups}" = false  ]; then
           logerror "Cannot copy incremental backups until 'incremental_backups' is true " \
           "in ${YAML_FILE} "
         fi
@@ -407,7 +413,7 @@ function validate() {
           touch "${BACKUP_DIR}/last_inc_backup_time"
         fi
       else
-          if [ ${CLEAR_INCREMENTALS} = true ] && [ ${incremental_backups} != true ]; then
+          if [ "${CLEAR_INCREMENTALS}" = true ] && [ "${incremental_backups}" != true ]; then
               logerror "Cannot clear incremental backups because 'incremental_backups' is " \
               "false in ${YAML_FILE} "
           fi
@@ -454,9 +460,8 @@ function verbose_vars() {
   logverbose "DOWNLOAD_ONLY: ${DOWNLOAD_ONLY}"
   logverbose "DRY_RUN: ${DRY_RUN}"
   logverbose "FORCE_RESTORE: ${FORCE_RESTORE}"
-  logverbose "GCS_BUCKET: ${GCS_BUCKET}"
-  logverbose "GCS_TMPDIR: ${GCS_TMPDIR}"
-  logverbose "GSUTIL: ${GSUTIL}"
+  logverbose "S3_BUCKET: ${S3_BUCKET}"
+  logverbose "S3CMD: ${S3CMD}"
   logverbose "HOSTNAME: ${HOSTNAME}"
   logverbose "INCREMENTAL: ${INCREMENTAL}"
   logverbose "INCLUDE_CACHES: ${INCLUDE_CACHES}"
@@ -484,13 +489,10 @@ function verbose_vars() {
 
 # Check that script is not running more than once
 function single_script_check() {
-  local grep_script
-  #wraps a [] around the first letter to trick the grep statement into ignoring itself
-  grep_script="$(echo ${SCRIPT_NAME} | sed 's/^/\[/' | sed 's/^\(.\{2\}\)/\1\]/')"
+  local pid="$$" pids status
   logverbose "checking that script isn't already running"
-  logverbose "grep_script: ${grep_script}"
-  status="$(ps -feww | grep -w \"${grep_script}\" \
-    | awk -v pid="$(echo $$)" '$2 != pid { print $2 }')"
+  pids=$(pgrep -f $SCRIPT_NAME)
+  status=$(echo "${pids}" | grep -v "^${pid}" || true)
   if [ ! -z "${status}" ]; then
     logerror " ${SCRIPT_NAME} : Process is already running. Aborting"
     exit 1;
@@ -507,12 +509,14 @@ function touch_logfile() {
 # List available backups in GCS
 function inventory() {
   loginfo "Available Snapshots:"
-  ${GSUTIL} ls -d "${GCS_BUCKET}/backups/${HOSTNAME}/snpsht/*"
-  if [ -z $incremental_backups ] || [ $incremental_backups = false ]; then
+  ## TODO DELETE ${GSUTIL} ls -d "${S3_BUCKET}/backups/${HOSTNAME}/snpsht/*"
+  ${S3CMD} ls "${S3_BUCKET}/backups/${HOSTNAME}/snpsht/*"
+  if [ -z "$incremental_backups" ] || [ "$incremental_backups" = false ]; then
     loginfo "Incremental Backups are not enabled for Cassandra"
   fi
   loginfo "Available Incremental Backups:"
-  ${GSUTIL} ls -d "${GCS_BUCKET}/backups/${HOSTNAME}/incr/*"
+  # TODO DELETE ${GSUTIL} ls -d "${S3_BUCKET}/backups/${HOSTNAME}/incr/*"
+  ${S3CMD} ls "${S3_BUCKET}/backups/${HOSTNAME}/incr/*"
 }
 
 # This is the main backup function that orchestrates all the options
@@ -554,7 +558,7 @@ function parse_yaml_backup() {
           'incremental_backups' \
           'native_transport_port' \
           'rpc_address')
-  parse_yaml ${YAML_FILE}
+  eval "$(parse_yaml "${YAML_FILE}")"
 }
 
 #specific variables are needed for restore
@@ -565,13 +569,12 @@ function parse_yaml_restore() {
           'saved_caches_directory' \
           'incremental_backups' \
           'seed_provider_class_name_parameters_seeds')
-
-  parse_yaml ${YAML_FILE}
+  eval "$(parse_yaml "${YAML_FILE}")"
 }
 
 function parse_yaml_inventory() {
   fields=('incremental_backups')
-  parse_yaml ${YAML_FILE}
+  eval "$(parse_yaml "${YAML_FILE}")"
 }
 
 # Based on https://gist.github.com/pkuczynski/8665367
@@ -593,9 +596,9 @@ function parse_yaml() {
     w='[a-zA-Z0-9_]*'
     fs="$(echo @|tr @ '\034')"
     d=4
-    eval $(
+    #eval $(
       sed -ne "s|^\($s\)\($w\)$s:$s\"\(.*\)\"$s\$|\1$fs\2$fs\3|p" \
-            -e "s|^\($s\)-\?$s\($w\)$s[:-]$s\(.*\)$s\$|\1$fs\2$fs\3|p" $1 |
+            -e "s|^\($s\)-\?$s\($w\)$s[:-]$s\(.*\)$s\$|\1$fs\2$fs\3|p" "$1" |
       awk -F"$fs"  -v names="${fields[*]}" '
       BEGIN { split(names,n," ") }
       { sc=length($1) % "'$d'";
@@ -615,21 +618,22 @@ function parse_yaml() {
           if($2 ~ /^ *$/ && vn ~ /_$/) { vn=substr(vn,1,length(vn)-1);ap="+" }
           for ( name in  n ) {
             if ( $2 == n[name] || vn == n[name] || (vn)($2) == n[name]) {
-              printf("%s%s%s=(\"%s\")\n", vn, $2, ap, $3);
+              printf("%s%s%s=(\"%s\");\n", vn, $2, ap, $3);
               if ("'"$VERBOSE"'" == "true"){
-                printf(";logverbose %s%s%s=\\(\\\"%s\\\"\\);", vn, $2, ap, $3);
+                printf("logverbose %s%s%s=\\(\\\"%s\\\"\\);", vn, $2, ap, $3);
               }
             }
           }
         }
       }'
-    )
+    #)
 }
 
 # If a username and password is required for cqlsh and nodetool
 function set_auth_string() {
   if ${USE_AUTH}; then
     if [ -n "${USER_FILE}" ] && [ -f "${USER_FILE}" ]; then
+      # shellcheck disable=SC1090
       source "${USER_FILE}"
     fi
     if [ -z "${CASSANDRA_USER}" ] || [ -z "${CASSANDRA_PASS}" ]; then
@@ -641,14 +645,14 @@ function set_auth_string() {
 
 # Set the backup path bucket URL
 function create_gcs_backup_path() {
-  GCS_BACKUP_PATH="${GCS_BUCKET}/backups/${HOSTNAME}/${SUFFIX}/${DATE}/"
+  GCS_BACKUP_PATH="${S3_BUCKET}/backups/${HOSTNAME}/${SUFFIX}/${DATE}/"
   loginfo "Will use target backup directory: ${GCS_BACKUP_PATH}"
 }
 
 # In case there is an existing backup file list, clear it out
 function clear_backup_file_list() {
   loginfo "Clearing target list file: ${TARGET_LIST_FILE}"
-   > "${TARGET_LIST_FILE}"
+  : > "${TARGET_LIST_FILE}"
 }
 
 # Use nodetool to take a snapshot with a specific name
@@ -659,7 +663,7 @@ function take_snapshot() {
   if ${DRY_RUN}; then
     loginfo "DRY RUN: ${NODETOOL} ${USER_OPTIONS} snapshot -t ${SNAPSHOT_NAME} "
   else
-    ${NODETOOL} ${USER_OPTIONS} snapshot -t "${SNAPSHOT_NAME}" #2>&1 > ${LOG_FILE}
+    eval "${NODETOOL} ${USER_OPTIONS} snapshot -t ${SNAPSHOT_NAME}" #2>&1 > ${LOG_FILE}
     loginfo "Completed Snapshot ${SNAPSHOT_NAME}"
   fi
 }
@@ -712,23 +716,34 @@ function copy_other_files() {
 # compare against a timestamp file to copy only the newest files
 function find_incrementals() {
   loginfo "Locating Incremental backup files"
-  LAST_INC_BACKUP_TIME="$(head -n 1 ${BACKUP_DIR}/last_inc_backup_time)"
+  LAST_INC_BACKUP_TIME=$(head -n 1 "${BACKUP_DIR}/last_inc_backup_time")
   #take time before list to backup is compiled
-  local time_before_find=$(prepare_date "+%F %H:%M:%S")
+  local time_before_find numlines
+  time_before_find=$(prepare_date "+%F %H:%M:%S")
   for i in "${data_file_directories[@]}"
   do
     if [ -n "${LAST_INC_BACKUP_TIME}" ]; then
-      find ${i} -mindepth 4 -maxdepth 4 -path '*/backups/*' -type f \
+      find "${i}" -mindepth 4 -maxdepth 4 -path '*/backups/*' -type f \
         \( -name "*.db" -o -name "*.crc32" -o -name "*.txt" \) \
         -newermt "${LAST_INC_BACKUP_TIME}" >> "${TARGET_LIST_FILE}"
     else
-      find ${i} -mindepth 4 -maxdepth 4 -path '*/backups/*' -type f \
+      find "${i}" -mindepth 4 -maxdepth 4 -path '*/backups/*' -type f \
         \( -name "*.db" -o -name "*.crc32" -o -name "*.txt" \) \
         >> "${TARGET_LIST_FILE}"
     fi
   done
   #if there is only one line in the file then no files were found
-  if [ $(cat "${TARGET_LIST_FILE}" | wc -l) -lt 1 ]; then
+  # TODO
+  # TODO CHECK THIS LOGIC WHEN USING INCREMENTALS
+  # TODO Previous code was probably broken wrt 'wc -l', since wc returns
+  # TODO two columns so the $(...) should be in error state and always <1 ??
+  #   if [ $(cat "${TARGET_LIST_FILE}" | wc -l) -lt 1 ]; then
+  #     loginfo "No new incremental files detected, aborting backup"
+  #     exit 0
+  #   fi
+  # TODO
+  numlines=$(wc -l "${TARGET_LIST_FILE}" | awk '{ print $1; }')
+  if [ "${numlines}" -lt 1 ]; then
     loginfo "No new incremental files detected, aborting backup"
     exit 0
   fi
@@ -739,7 +754,7 @@ function find_incrementals() {
 # After successful backup, update last_inc_backup_time file
 function save_last_inc_backup_time() {
   if ! ${DRY_RUN}; then
-    echo "${LAST_INC_BACKUP_TIME}" > ${BACKUP_DIR}/last_inc_backup_time
+    echo "${LAST_INC_BACKUP_TIME}" > "${BACKUP_DIR}/last_inc_backup_time"
   fi
 }
 
@@ -748,7 +763,7 @@ function find_snapshots() {
   loginfo "Locating Snapshot ${SNAPSHOT_NAME}"
   for i in "${data_file_directories[@]}"
   do
-    find ${i} -path "*/snapshots/${SNAPSHOT_NAME}/*" -type f >> "${TARGET_LIST_FILE}"
+    find "${i}" -path "*/snapshots/${SNAPSHOT_NAME}/*" -type f >> "${TARGET_LIST_FILE}"
   done
 }
 
@@ -786,7 +801,7 @@ function clear_snapshots() {
   if ${DRY_RUN}; then
     loginfo "DRY RUN: did not clear snapshots"
   else
-    $NODETOOL ${USER_OPTIONS} clearsnapshot
+    eval "${NODETOOL} ${USER_OPTIONS} clearsnapshot"
   fi
 }
 
@@ -799,9 +814,9 @@ function clear_incrementals() {
     if ${DRY_RUN}; then
       loginfo "DRY RUN: did not clear old incremental backups"
     else
-      find ${i} -mindepth 4 -maxdepth 4 -path '*/backups/*' -type f \
+      find "${i}" -mindepth 4 -maxdepth 4 -path '*/backups/*' -type f \
         \( -name "*.db" -o -name "*.crc32" -o -name "*.txt" \) \
-        \! -newermt "${SNAPSHOT_TIME}" -exec rm -f ${VERBOSE_RM} {} \;
+        \! -newermt "${SNAPSHOT_TIME}" -exec rm -f "${VERBOSE_RM}" {} \;
     fi
   done
 }
@@ -811,15 +826,16 @@ function copy_to_gcs() {
   loginfo "Copying files to ${GCS_BACKUP_PATH}"
   if ${DRY_RUN}; then
     if ${SPLIT_FILE}; then
-      loginfo "DRY RUN: ${GSUTIL} -m cp ${COMPRESS_DIR}/${SPLIT_FILE_SUFFIX}* ${GCS_BACKUP_PATH}"
+      # TODO DELETE loginfo "DRY RUN: ${GSUTIL} -m cp ${COMPRESS_DIR}/${SPLIT_FILE_SUFFIX}* ${GCS_BACKUP_PATH}"
+      loginfo "DRY RUN: ${S3CMD} put ${COMPRESS_DIR}/${SPLIT_FILE_SUFFIX}* ${GCS_BACKUP_PATH}"
     else
-      loginfo "DRY RUN: ${GSUTIL} cp ${COMPRESS_DIR}/${ARCHIVE_FILE} ${GCS_BACKUP_PATH}"
+      loginfo "DRY RUN: ${S3CMD} put ${COMPRESS_DIR}/${ARCHIVE_FILE} ${GCS_BACKUP_PATH}"
     fi
   else
     if ${SPLIT_FILE}; then
-      ${GSUTIL} -m cp "${COMPRESS_DIR}/${SPLIT_FILE_SUFFIX}*" "${GCS_BACKUP_PATH}"
+      ${S3CMD} put "${COMPRESS_DIR}/${SPLIT_FILE_SUFFIX}*" "${GCS_BACKUP_PATH}"
     else
-      ${GSUTIL} cp "${COMPRESS_DIR}/${ARCHIVE_FILE}" "${GCS_BACKUP_PATH}"
+      ${S3CMD} put "${COMPRESS_DIR}/${ARCHIVE_FILE}" "${GCS_BACKUP_PATH}"
     fi
   fi
 }
@@ -837,10 +853,10 @@ function backup_cleanup() {
       loginfo "  ${TOKEN_RING_DIR}/${DATE}-token-ring"
     else
       loginfo "Deleting backup files"
-      find "${COMPRESS_DIR}/" -type f -exec rm -f ${VERBOSE_RM} {} \;
-      find "${SCHEMA_DIR}/" -type f -exec rm -f ${VERBOSE_RM} {} \;
-      find "${TOKEN_RING_DIR}/" -type f -exec rm -f ${VERBOSE_RM} {} \;
-      rm -f ${VERBOSE_RM} ${TARGET_LIST_FILE}
+      find "${COMPRESS_DIR}/" -type f -exec rm -f "${VERBOSE_RM}" {} \;
+      find "${SCHEMA_DIR}/" -type f -exec rm -f "${VERBOSE_RM}" {} \;
+      find "${TOKEN_RING_DIR}/" -type f -exec rm -f "${VERBOSE_RM}" {} \;
+      rm -f "${VERBOSE_RM}" "${TARGET_LIST_FILE}"
     fi
   fi
 }
@@ -876,7 +892,7 @@ function restore_get_files() {
   if ${DRY_RUN}; then
     loginfo "DRY RUN: Would have cleared restore dir ${BACKUP_DIR}/restore/*"
   else
-    rm -rf ${VERBOSE_RM} ${BACKUP_DIR}/restore/*
+    rm -rf "${VERBOSE_RM}" "${BACKUP_DIR}/restore/*"
   fi
   if ${SPLIT_FILE}; then
     restore_split_from_gcs
@@ -890,9 +906,9 @@ function restore_get_files() {
 function restore_split_from_gcs() {
   loginfo "Downloading restore files from GCS"
   if ${DRY_RUN}; then
-    loginfo "DRY RUN: ${GSUTIL} -m -r cp ${GCS_BUCKET} ${COMPRESS_DIR}"
+    loginfo "DRY RUN: ${S3CMD} get -r ${S3_BUCKET} ${COMPRESS_DIR}"
   else
-    ${GSUTIL} -m cp -r  "${GCS_BUCKET}" "${COMPRESS_DIR}"
+    ${S3CMD} get -r "${S3_BUCKET}" "${COMPRESS_DIR}"
   fi
   restore_split
 }
@@ -900,10 +916,10 @@ function restore_split_from_gcs() {
 # Retrieve the compressed backup file
 function restore_compressed_from_gcs() {
     if ${DRY_RUN}; then
-      loginfo "DRY RUN: ${GSUTIL} cp ${GCS_BUCKET} ${COMPRESS_DIR}"
+      loginfo "DRY RUN: ${S3CMD} get ${S3_BUCKET} ${COMPRESS_DIR}"
     else
        #copy the tar.gz file
-      ${GSUTIL} cp "${GCS_BUCKET}" "${COMPRESS_DIR}"
+      ${S3CMD} get "${S3_BUCKET}" "${COMPRESS_DIR}"
     fi
     restore_decompress
 }
@@ -942,7 +958,7 @@ function restore_fix_perms() {
   if ${DRY_RUN}; then
     loginfo "DRY RUN: chown -R ${CASSANDRA_OG} ${1} "
   else
-    chown -R ${CASSANDRA_OG} ${1}
+    chown -R "${CASSANDRA_OG}" "${1}"
   fi
 }
 
@@ -976,24 +992,24 @@ function restore_files() {
     restore_fix_perms "${saved_caches_directory}"
     loginfo "Performing rsync commitlogs and caches from restore directory to full path"
     if [ -d "${BACKUP_DIR}/restore${commitlog_directory}" ]; then
-      rsync -aH ${VERBOSE_RSYNC} ${BACKUP_DIR}/restore${commitlog_directory}/* ${commitlog_directory}/
+      rsync -aH "${VERBOSE_RSYNC}" "${BACKUP_DIR}/restore${commitlog_directory}/*" "${commitlog_directory}/"
     fi
     if [ -d "${BACKUP_DIR}/restore${saved_caches_directory}" ]; then
-      rsync -aH ${VERBOSE_RSYNC} ${BACKUP_DIR}/restore${saved_caches_directory}/* ${saved_caches_directory}/
+      rsync -aH "${VERBOSE_RSYNC}" "${BACKUP_DIR}/restore${saved_caches_directory}/*" "${saved_caches_directory}/"
     fi
 
     for i in "${data_file_directories[@]}"
     do
       #have to recreate it since we moved the old one for safety
-      mkdir -p ${i} && restore_fix_perms ${i}
+      mkdir -p "${i}" && restore_fix_perms "${i}"
       loginfo "Performing rsync data files from restore directory to full path ${i}"
-      rsync -aH ${VERBOSE_RSYNC}  ${BACKUP_DIR}/restore${i}/*  ${i}/
+      rsync -aH "${VERBOSE_RSYNC}"  "${BACKUP_DIR}/restore${i}/*"  "${i}/"
       loginfo "Moving snapshot files up two directories to their keyspace base directories"
       #assume the snap* pattern is safe since no other
       # snapshots should have been copied in the backup process
-      find ${i} -mindepth 2 -path '*/snapshots/snap*/*' -type f \
-        -exec bash -c 'dir={}&& cd ${dir%/*} && mv {} ../..' \;
-      restore_fix_perms ${i}
+      find "${i}" -mindepth 2 -path '*/snapshots/snap*/*' -type f \
+        -exec bash -c 'dir="$1" && cd ${dir%/*} && mv "$1" ../..' bash {} \;
+      restore_fix_perms "${i}"
     done
   fi
 }
@@ -1005,17 +1021,20 @@ function restore_files() {
 function restore_stop_cassandra() {
   if ${DRY_RUN}; then
     loginfo "DRY RUN: Flushing and Stopping Cassandra"
-    loginfo "DRY RUN: $NODETOOL ${USER_OPTIONS} " \
-    "flush; service $SERVICE_NAME stop"
+    loginfo "DRY RUN: $NODETOOL ${USER_OPTIONS} drain; " \
+    "$NODETOOL ${USER_OPTIONS} flush; systemctl stop $SERVICE_NAME"
   else
     set +e
     #the following status script often throws an error, ignore it
-    if $NODETOOL ${USER_OPTIONS}  status | grep -q "Connection refused"; then
-      loginfo "Attempted to Stop Cassandra service but it seems to already be stopped"
+    if ${NODETOOL} "${USER_OPTIONS} status" 2>&1 | grep -q "Connection refused"; then
+      loginfo "About to Stop Cassandra service but it seems to already be stopped. Skipping."
     else
-      $NODETOOL ${USER_OPTIONS} flush
+      echo "Running: ${NODETOOL} ${USER_OPTIONS} drain"
+      eval "${NODETOOL} ${USER_OPTIONS} drain"
+      echo "Running: ${NODETOOL} ${USER_OPTIONS} flush"
+      eval "${NODETOOL} ${USER_OPTIONS} flush"
       loginfo "Stopping Cassandra Service ${SERVICE_NAME} and sleep for 10 seconds"
-      service ${SERVICE_NAME} stop
+      systemctl stop "${SERVICE_NAME}"
       sleep 10
     fi
     set -e
@@ -1030,7 +1049,7 @@ function restore_start_cassandra() {
       loginfo "DRY RUN: Starting Cassandra"
   else
     if "${AUTO_RESTART}"; then
-      service ${SERVICE_NAME} start
+      systemctl start "${SERVICE_NAME}"
     fi
   fi
 }
@@ -1048,9 +1067,9 @@ function restore_cleanup() {
       loginfo "  ${BACKUP_DIR}/restore/"
     else
       loginfo "Deleting old files"
-      rm -rf ${VERBOSE_RM} "${commitlog_directory}_old_${DATE}"
-      rm -rf ${VERBOSE_RM} "${saved_caches_directory}_old_${DATE}"
-      rm -rf ${VERBOSE_RM} "${BACKUP_DIR}/restore/"
+      rm -rf "${VERBOSE_RM}" "${commitlog_directory}_old_${DATE}"
+      rm -rf "${VERBOSE_RM}" "${saved_caches_directory}_old_${DATE}"
+      rm -rf "${VERBOSE_RM}" "${BACKUP_DIR}/restore/"
     fi
 
     for i in "${data_file_directories[@]}"
@@ -1059,11 +1078,11 @@ function restore_cleanup() {
         loginfo "keeping old data: ${i}_old_${DATE}"
       else
         loginfo "deleting old data: ${i}_old_${DATE}"
-        rm -rf ${VERBOSE_RM} "${i}_old_${DATE}"
+        rm -rf "${VERBOSE_RM}" "${i}_old_${DATE}"
      fi
     done
-    rm -rf ${VERBOSE_RM} ${BACKUP_DIR}/restore
-    rm -rf ${VERBOSE_RM} ${COMPRESS_DIR:?"aborting bad compress_dir"}/*
+    rm -rf "${VERBOSE_RM}" "${BACKUP_DIR}/restore"
+    rm -rf "${VERBOSE_RM}" "${COMPRESS_DIR:?"aborting bad compress_dir"}/*"
   fi
 }
 
@@ -1076,7 +1095,7 @@ function restore_confirm() {
     fi
     while true
     do
-      read -p "Confirm: Stop Cassandra and restore the files \
+      read -r -p "Confirm: Stop Cassandra and restore the files \
       from ${BACKUP_DIR}/restore? Y or N" ans
       case $ans in
         [yY]* )
@@ -1114,7 +1133,7 @@ for arg in "$@"; do
     "inventory") set -- "$@" "-I" ;;
     "--alt-hostname")   set -- "$@" "-a" ;;
     "--auth-file") set -- "$@" "-U" ;;
-    "--gcsbucket") set -- "$@" "-b" ;;
+    "--s3bucket") set -- "$@" "-b" ;;
     "--backupdir")   set -- "$@" "-d" ;;
     "--bzip")    set -- "$@" "-j" ;;
     "--clear-old-ss")   set -- "$@" "-c" ;;
@@ -1147,7 +1166,7 @@ do
           HOSTNAME=${OPTARG}
           ;;
       b)
-          GCS_BUCKET=${OPTARG%/}
+          S3_BUCKET=${OPTARG%/}
           ;;
       B)
           ACTION="backup"
@@ -1191,7 +1210,7 @@ do
           ;;
       l)
           LOG_OUTPUT=true
-          [ -d ${OPTARG} ] && LOG_DIR=${OPTARG%/}
+          [ -d "${OPTARG}" ] && LOG_DIR=${OPTARG%/}
           ;;
       L)
           INCLUDE_COMMIT_LOGS=true
@@ -1247,7 +1266,7 @@ do
 done
 
 ACTION=${ACTION:-backup} # either backup or restore
-AGE=5 #five minutes ago the last modified date of incremental backups to prune
+#AGE=5 #five minutes ago the last modified date of incremental backups to prune
 AUTO_RESTART=true #flag set to false if Cassandra is part of a cluster
 BACKUP_DIR=${BACKUP_DIR:-/cassandra/backups} # Backups base directory
 BZIP=${BZIP:-false} #use bzip2 compression
@@ -1258,14 +1277,14 @@ CLEAR_INCREMENTALS=${CLEAR_INCREMENTALS:-false} #flag to delete incrementals pos
 CLEAR_SNAPSHOTS=${CLEAR_SNAPSHOTS:-false} #clear old snapshots pre-snapshot
 COMPRESS_DIR=${COMPRESS_DIR:-${BACKUP_DIR}/compressed} #directory to house backup archive
 COMPRESSION=${COMPRESSION:-false} #flag to use tar+gz
-CQLSH="$(which cqlsh)" #which cqlsh command
-CQLSH_DEFAULT_HOST="127.0.0.1" #cqlsh host - currently hard coded
+CQLSH="$(which cqlsh) --ssl --cqlshrc=/etc/cassandra/conf/chirp_cqlshrc" #which cqlsh command
+CQLSH_DEFAULT_HOST="$HOSTNAME" #cqlsh host - currently hard coded
 DATE="$(prepare_date +%F_%H-%M )" #nicely formatted date string for files
 DOWNLOAD_ONLY=${DOWNLOAD_ONLY:-false} #user flag or used if incremental restore is requested
 DRY_RUN=${DRY_RUN:-false} #flag to only print what would have executed
 ERROR_COUNT=0 #used in validation step will exit if > 0
 FORCE_RESTORE=${FORCE_RESTORE:-false} #flag to bypass restore confirmation prompt
-GSUTIL="$(which gsutil)" #which gsutil script
+S3CMD="$(which s3cmd)" #which s3cmd script
 HOSTNAME=${HOSTNAME:-"$(hostname)"} #used for gcs backup location
 INCLUDE_CACHES=${INCLUDE_CACHES:-false} #include the saved caches for posterity
 INCLUDE_COMMIT_LOGS=${INCLUDE_COMMIT_LOGS:-false} #include the commit logs for extra safety

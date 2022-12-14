@@ -1,6 +1,6 @@
-Cassandra Backup and Restore with Google Cloud Storage
+Cassandra Backup and Restore with S3 Object Stores
 ====================
-Shell script for creating and managing Cassandra Backups using Google Cloud Storage.
+Shell script for creating and managing Cassandra Backups using S3 compatible object stores.
 ## Features
 - Take snapshot backups
 - Copy Incremental backup files
@@ -9,8 +9,8 @@ Shell script for creating and managing Cassandra Backups using Google Cloud Stor
 - Execute Dry Run mode to identify target files
 
 ## Requirements
-Google Cloud SDK installed with gsutil utility configured for authentication to 
-An existing Google Cloud Storage bucket 
+The `s3cmd` utility, available with 'pip install s3cmd'.
+An existing S3 bucket 
 Linux system with BASH shell. 
 Cassandra 2+
 
@@ -20,29 +20,29 @@ Cassandra 2+
 
 ### Examples
   - Take a full snapshot, gzip compress it with nice level 15,  use the /var/lib/cassandra/backups directory to stage the backup before
-  uploading it to the GCS Bucket, and clear old incremental and snapshot files
+  uploading it to the S3 Bucket, and clear old incremental and snapshot files
 
- `./cassandra-cloud-backup.sh -b gs://cassandra-backups123/ -zCc -N 15 -d /var/lib/cassandra/backups backup`
+ `./cassandra-cloud-backup.sh -b s3://cassandra-backups123/ -zCc -N 15 -d /var/lib/cassandra/backups backup`
 
   - Do a dry run of a full snapshot with verbose output and create list of files that would have been copied
 
-  `./cassandra-cloud-backup.sh -b gs://cassandra-backups123/ -vn backup`
+  `./cassandra-cloud-backup.sh -b s3://cassandra-backups123/ -vn backup`
 
   - Backup and bzip2 compress copies of the most recent incremental backup files since the last incremental backup
 
-`  ./cassandra-cloud-backup.sh -b gs://cassandra-backups123/ -ji -d /var/lib/cassandra/backups backup`
+`  ./cassandra-cloud-backup.sh -b s3://cassandra-backups123/ -ji -d /var/lib/cassandra/backups backup`
 
   - Restore a backup without prompting from given bucket path and keep the old files locally
 
- ` ./cassandra-cloud-backup.sh -b gs://cass-bk123/backups/host01/snpsht/2016-01-20_18-57/ -fk -d /var/lib/cassandra/backups restore`
+ ` ./cassandra-cloud-backup.sh -b s3://cass-bk123/backups/host01/snpsht/2016-01-20_18-57/ -fk -d /var/lib/cassandra/backups restore`
 
-  - List inventory of available backups stored in Google Cloud Store
+  - List inventory of available backups stored in S3
 
- ` ./cassandra-cloud-backup.sh -b gs://cass-bk123 inventory`
+ ` ./cassandra-cloud-backup.sh -b s3://cass-bk123 inventory`
  
-  - List inventory of available backups stored in Google Cloud Store for a different server
+  - List inventory of available backups stored in S3 for a different server
 
- ` ./cassandra-cloud-backup.sh -b gs://cass-bk123 inventory -a testserver01`
+ ` ./cassandra-cloud-backup.sh -b s3://cass-bk123 inventory -a testserver01`
 
 ### Commands:
 
@@ -62,8 +62,8 @@ Cassandra 2+
   -B, backup
     Default action is to take a backup
 
-  -b, --gcsbucket
-   Google Cloud Storage bucket used in deployment and by the cluster.
+  -b, --s3bucket
+   S3 bucket used in deployment and by the cluster.
 
   -c, --clear-old-ss
     Clear any old SnapShots taken prior to this backup run to save space
@@ -95,7 +95,7 @@ Cassandra 2+
     be run when compression is enabled with -z or -j
 
   -j, --bzip
-    Compresses the backup files with bzip2 prior to pushing to Google Cloud Storage
+    Compresses the backup files with bzip2 prior to pushing to S3
     This option will use additional local disk space set the --target-gz-dir
     to use an alternate disk location if free space is an issue
 
@@ -147,7 +147,7 @@ Cassandra 2+
     default: /etc/cassandra/cassandra.yaml
 
   -z, --zip
-    Compresses the backup files with gzip prior to pushing to Google Cloud Storage
+    Compresses the backup files with gzip prior to pushing to S3
     This option will use additional local disk space set the --target-gz-dir
     to use an alternate disk location if free space is an issue
 
@@ -155,11 +155,11 @@ Cassandra 2+
 ###Cron Examples
 - Full gzip compressed snapshot every day at 1:30 am with nice level 10
 
-`30 1 * * * /path_to_scripts/cassandra-cloud-backup.sh -z -N10 -b gs://cass-bk123-vCcj -d /var/lib/cassandra/backups > /var/log/cassandra/$(date +\%Y\%m\%d\%H\%M\%S)-fbackup.log 2>&1`
+`30 1 * * * /path_to_scripts/cassandra-cloud-backup.sh -z -N10 -b s3://cass-bk123-vCcj -d /var/lib/cassandra/backups > /var/log/cassandra/$(date +\%Y\%m\%d\%H\%M\%S)-fbackup.log 2>&1`
 
 - Incremental gzip compressed backups copied every hour nice level 10
 
-`0 * * * * /path_to_scripts/cassandra-cloud-backup.sh -b -N10 gs://cass-bk123 -vjiz -d /var/lib/cassandra/backups > /var/log/cassandra/$(date +\%Y\%m\%d\%H\%M\%S)-ibackup.log 2>&1`
+`0 * * * * /path_to_scripts/cassandra-cloud-backup.sh -b -N10 s3://cass-bk123 -vjiz -d /var/lib/cassandra/backups > /var/log/cassandra/$(date +\%Y\%m\%d\%H\%M\%S)-ibackup.log 2>&1`
 
 ### Notes
 
