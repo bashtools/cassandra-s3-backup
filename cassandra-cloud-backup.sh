@@ -72,6 +72,10 @@ Flags:
   -D, --download-only
     During a restore this will only download the target files from S3
 
+  -e, --ssl-rc-file
+    Specify the name of the CQL resource file to use with cql.
+    Adds '--ssl' and '--cqlshrc' to the cql command to enable connecting using SSL.
+
   -f, --force
     Used to force the restore without confirmation prompt
 
@@ -692,7 +696,7 @@ function export_schema() {
   loginfo "Exporting Schema to ${SCHEMA_DIR}/${DATE}-schema.cql"
   local cqlsh_host=${rpc_address:-$CQLSH_DEFAULT_HOST}
   local cmd
-  cmd="${CQLSH} ${cqlsh_host} ${native_transport_port} ${USER_OPTIONS} -e 'DESC SCHEMA;'"
+  cmd="${CQLSH} ${CQLSH_RC} ${CQLSH_SSL} ${cqlsh_host} ${native_transport_port} ${USER_OPTIONS} -e 'DESC SCHEMA;'"
   if ${DRY_RUN}; then
     loginfo "DRY RUN:  ${cmd}  > ${SCHEMA_DIR}/${DATE}-schema.cql"
   else
@@ -1160,6 +1164,7 @@ for arg in "$@"; do
     "--clear-old-ss")   set -- "$@" "-c" ;;
     "--clear-old-inc")   set -- "$@" "-C" ;;
     "--download-only")   set -- "$@" "-D" ;;
+    "--ssl-rc-file")  set -- "$@" "-e" ;;
     "--force")   set -- "$@" "-f" ;;
     "--help") set -- "$@" "-h" ;;
     "--home-dir") set -- "$@" "-H" ;;
@@ -1180,7 +1185,7 @@ for arg in "$@"; do
   esac
 done
 
-while getopts 'a:b:BcCd:DfhH:iIjkl:LnN:p:rs:S:T:u:U:vwy:z' OPTION
+while getopts 'a:b:BcCd:e:DfhH:iIjkl:LnN:p:rs:S:T:u:U:vwy:z' OPTION
 do
   case $OPTION in
       a)
@@ -1203,6 +1208,10 @@ do
           ;;
       D)
           DOWNLOAD_ONLY=true
+          ;;
+      e)
+          CQLSH_RC="--cqlshrc=${OPTARG}"
+          CQLSH_SSL="--ssl"
           ;;
       f)
           FORCE_RESTORE=true
@@ -1298,7 +1307,7 @@ CLEAR_INCREMENTALS=${CLEAR_INCREMENTALS:-false} #flag to delete incrementals pos
 CLEAR_SNAPSHOTS=${CLEAR_SNAPSHOTS:-false} #clear old snapshots pre-snapshot
 COMPRESS_DIR=${COMPRESS_DIR:-${BACKUP_DIR}/compressed} #directory to house backup archive
 COMPRESSION=${COMPRESSION:-false} #flag to use tar+gz
-CQLSH="$(which cqlsh) --ssl --cqlshrc=/etc/cassandra/conf/chirp_cqlshrc" #which cqlsh command
+CQLSH="$(which cqlsh)" #which cqlsh command
 CQLSH_DEFAULT_HOST="$HOSTNAME" #cqlsh host - currently hard coded
 DATE="$(prepare_date +%F_%H-%M )" #nicely formatted date string for files
 DOWNLOAD_ONLY=${DOWNLOAD_ONLY:-false} #user flag or used if incremental restore is requested
