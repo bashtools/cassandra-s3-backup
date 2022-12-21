@@ -549,6 +549,23 @@ function backup() {
   fi
 }
 
+function dereference_data_directories() {
+  declare -i idx=0
+
+  for i in "${data_file_directories[@]}"
+  do
+    data_file_directories[idx]=$(realpath "${i}")
+    idx+=1
+  done
+
+  commitlog_directory=$(realpath "${commitlog_directory}")
+  saved_caches_directory=$(realpath "${saved_caches_directory}")
+
+  logverbose "dereferenced data_file_directories=${data_file_directories[*]}"
+  logverbose "dereferenced commitlog_directory=${commitlog_directory}"
+  logverbose "dereferenced saved_caches_directory=${saved_caches_directory}"
+}
+
 #specific variables are needed for backup
 function parse_yaml_backup() {
   loginfo "Parsing Cassandra Yaml Config Values"
@@ -559,6 +576,7 @@ function parse_yaml_backup() {
           'native_transport_port' \
           'rpc_address')
   eval "$(parse_yaml "${YAML_FILE}")"
+  dereference_data_directories
 }
 
 #specific variables are needed for restore
@@ -570,6 +588,7 @@ function parse_yaml_restore() {
           'incremental_backups' \
           'seed_provider_class_name_parameters_seeds')
   eval "$(parse_yaml "${YAML_FILE}")"
+  dereference_data_directories
 }
 
 function parse_yaml_inventory() {
@@ -992,10 +1011,12 @@ function restore_files() {
     restore_fix_perms "${saved_caches_directory}"
     loginfo "Performing rsync commitlogs and caches from restore directory to full path"
     if [ -d "${BACKUP_DIR}/restore${commitlog_directory}" ]; then
-      rsync -aH "${VERBOSE_RSYNC}" "${BACKUP_DIR}/restore${commitlog_directory}/*" "${commitlog_directory}/"
+      rsync -aH "${VERBOSE_RSYNC}" "${VERBOSE_PROGRESS}" \
+        "${BACKUP_DIR}/restore${commitlog_directory}/*" "${commitlog_directory}/"
     fi
     if [ -d "${BACKUP_DIR}/restore${saved_caches_directory}" ]; then
-      rsync -aH "${VERBOSE_RSYNC}" "${BACKUP_DIR}/restore${saved_caches_directory}/*" "${saved_caches_directory}/"
+      rsync -aH "${VERBOSE_RSYNC}" "${VERBOSE_PROGRESS}" \
+        "${BACKUP_DIR}/restore${saved_caches_directory}/*" "${saved_caches_directory}/"
     fi
 
     for i in "${data_file_directories[@]}"
@@ -1003,7 +1024,7 @@ function restore_files() {
       #have to recreate it since we moved the old one for safety
       mkdir -p "${i}" && restore_fix_perms "${i}"
       loginfo "Performing rsync data files from restore directory to full path ${i}"
-      rsync -aH "${VERBOSE_RSYNC}"  "${BACKUP_DIR}/restore${i}/*"  "${i}/"
+      rsync -aH "${VERBOSE_RSYNC}" "${VERBOSE_PROGRESS}" "${BACKUP_DIR}/restore${i}/"*  "${i}/"
       loginfo "Moving snapshot files up two directories to their keyspace base directories"
       #assume the snap* pattern is safe since no other
       # snapshots should have been copied in the backup process
@@ -1313,7 +1334,10 @@ TAR_CFLAG=${TAR_CFLAG:-""} #flag for tar to use gzip, if bzip is requested then 
 USE_AUTH=${USE_AUTH:-false} #flag to use cqlsh authentication
 VERBOSE=${VERBOSE:-false} #prints detailed information
 VERBOSE_RSYNC="" # add more detail to rsync when verbose mode is active
-${VERBOSE} && VERBOSE_RSYNC="-v --progress"
+${VERBOSE} && {
+  VERBOSE_RSYNC="-v"
+  VERBOSE_PROGRESS="--progress"
+}
 VERBOSE_RM="" # add more detail to remove when verbose mode is active
 ${VERBOSE} && VERBOSE_RM="-v"
 YAML_FILE=${YAML_FILE:-/etc/cassandra/cassandra.yaml} #Cassandra config file
