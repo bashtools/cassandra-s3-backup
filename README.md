@@ -53,6 +53,7 @@ Cassandra 2+
 - options       ---        list available options
 
 ### Options:
+```
  Flags:
 
   -a, --alt-hostname
@@ -158,9 +159,9 @@ Cassandra 2+
     Compresses the backup files with gzip prior to pushing to S3
     This option will use additional local disk space set the --target-gz-dir
     to use an alternate disk location if free space is an issue
+```
 
-
-###Cron Examples
+### Cron Examples
 - Full gzip compressed snapshot every day at 1:30 am with nice level 10
 
 `30 1 * * * /path_to_scripts/cassandra-cloud-backup.sh -z -N10 -b s3://cass-bk123-vCcj -d /var/lib/cassandra/backups > /var/log/cassandra/$(date +\%Y\%m\%d\%H\%M\%S)-fbackup.log 2>&1`
