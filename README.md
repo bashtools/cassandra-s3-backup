@@ -80,6 +80,14 @@ Cassandra 2+
   -D, --download-only
     During a restore this will only download the target files from GCS
 
+  -e, --ssl-rc-file
+    Specify the name of a CQL resource file to use with cql.
+    Adds '--ssl' and '--cqlshrc' to the cql command to enable connecting using SSL.
+    Example CQL resource file content:
+    [ssl]
+    validate = false
+    certfile = /etc/cassandra/conf/cqlsh.pem
+
   -f, --force
     Used to force the restore without confirmation prompt
 

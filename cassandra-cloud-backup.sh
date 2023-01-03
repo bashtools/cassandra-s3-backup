@@ -73,8 +73,12 @@ Flags:
     During a restore this will only download the target files from S3
 
   -e, --ssl-rc-file
-    Specify the name of the CQL resource file to use with cql.
+    Specify the name of a CQL resource file to use with cql.
     Adds '--ssl' and '--cqlshrc' to the cql command to enable connecting using SSL.
+    Example CQL resource file content:
+    [ssl]
+    validate = false
+    certfile = /etc/cassandra/conf/cqlsh.pem
 
   -f, --force
     Used to force the restore without confirmation prompt
