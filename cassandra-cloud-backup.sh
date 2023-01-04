@@ -265,7 +265,7 @@ function validate() {
     exit 1
   fi
   if [ -z "${S3_BUCKET}" ]; then
-      logerror "Please pass in the GCS Bucket to use with this script"
+      logerror "Please pass in the S3 Bucket to use with this script"
       exit 1
   else
       if ! ${S3CMD} ls "${S3_BUCKET}" &> /dev/null; then
@@ -1050,18 +1050,18 @@ function restore_files() {
 function restore_stop_cassandra() {
   if ${DRY_RUN}; then
     loginfo "DRY RUN: Flushing and Stopping Cassandra"
-    loginfo "DRY RUN: $NODETOOL ${USER_OPTIONS} drain; " \
-    "$NODETOOL ${USER_OPTIONS} flush; systemctl stop $SERVICE_NAME"
+    loginfo "DRY RUN: $NODETOOL ${USER_OPTIONS} flush; " \
+    "$NODETOOL ${USER_OPTIONS} drain; systemctl stop $SERVICE_NAME"
   else
     set +e
     #the following status script often throws an error, ignore it
     if ${NODETOOL} "${USER_OPTIONS} status" 2>&1 | grep -q "Connection refused"; then
       loginfo "About to Stop Cassandra service but it seems to already be stopped. Skipping."
     else
-      echo "Running: ${NODETOOL} ${USER_OPTIONS} drain"
-      eval "${NODETOOL} ${USER_OPTIONS} drain"
       echo "Running: ${NODETOOL} ${USER_OPTIONS} flush"
       eval "${NODETOOL} ${USER_OPTIONS} flush"
+      echo "Running: ${NODETOOL} ${USER_OPTIONS} drain"
+      eval "${NODETOOL} ${USER_OPTIONS} drain"
       loginfo "Stopping Cassandra Service ${SERVICE_NAME} and sleep for 10 seconds"
       systemctl stop "${SERVICE_NAME}"
       sleep 10
